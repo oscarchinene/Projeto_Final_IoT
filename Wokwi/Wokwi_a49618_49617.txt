@@ -1,0 +1,226 @@
+https://wokwi.com/projects/432470735182904321
+
+#include <WiFi.h>              // Biblioteca para conexão Wi-Fi
+#include <PubSubClient.h>      // Biblioteca para comunicação MQTT
+#include <ESP32Servo.h>        // Biblioteca para controlar servos com o ESP32
+#include "DHTesp.h"            // Biblioteca para o sensor de temperatura e umidade DHT22
+
+// Objetos servo para controlar janela, cortina e ar-condicionado (AC)
+Servo myservoJanela;
+Servo myservoCortina;
+Servo myservoAC;
+
+// Credenciais da rede Wi-Fi
+const char* ssid = "Wokwi-GUEST";
+const char* password = "";
+
+// Endereço do broker MQTT
+const char* mqtt_server = "broker.hivemq.com";
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+// Sensor de temperatura e umidade
+DHTesp dhtSensor;
+const int DHT_PIN = 15;
+
+// Definições de pinos
+#define LIGHT_SENSOR_PIN 36 // Sensor de luz no pino 36 (entrada analógica)
+#define BUZZER_PIN 27       // Buzzer no pino 27
+#define PIR_PIN 35          // Sensor de movimento PIR no pino 35
+
+// Variáveis globais
+float temp = 0;        // Temperatura
+float hum = 0;         // Umidade
+long lastMsg = 0;      // Tempo da última mensagem enviada
+char msg[50];          // Buffer para mensagens MQTT
+int lotacao = 0;       // Número de detecções de movimento consecutivas (simula lotação)
+
+void setup() {
+  Serial.begin(115200); // Inicializa comunicação serial
+
+  // Associa cada servo ao seu respectivo pino
+  myservoJanela.attach(5);
+  myservoCortina.attach(4);
+  myservoAC.attach(21);
+
+  // Inicializa sensor DHT22
+  dhtSensor.setup(DHT_PIN, DHTesp::DHT22);
+
+  // Define os pinos do buzzer e PIR
+  pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(PIR_PIN, INPUT);
+
+  // Conecta-se à rede Wi-Fi e configura o cliente MQTT
+  setup_wifi();
+  client.setServer(mqtt_server, 1883);
+  client.setCallback(callback); // Define função de retorno de chamada para mensagens MQTT recebidas
+}
+
+void setup_wifi() {
+  delay(10);
+  Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+
+  WiFi.begin(ssid, password);
+
+  // Aguarda conexão Wi-Fi
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("\nWiFi connected");
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
+// Função chamada quando uma mensagem MQTT chega
+void callback(char* topic, byte* payload, unsigned int length) {
+  String string;
+  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.print("] ");
+
+  // Converte payload recebido em string
+  for (int i = 0; i < length; i++) {
+    string += (char)payload[i];
+  }
+  Serial.println(string);
+
+  // Comandos para controlar os servos com base no tópico recebido
+
+  // Controle da janela
+  if (strcmp(topic, "/49618_49617/Janela") == 0) {
+    int status = string.toInt();
+    int pos = map(status, 1, 100, 0, 180);
+    myservoJanela.write(pos);
+    delay(15);
+  }
+
+  // Controle da cortina
+  if (strcmp(topic, "/49618_49617/Cortina") == 0) {
+    int status = string.toInt();
+    int pos = map(status, 1, 100, 0, 180);
+    myservoCortina.write(pos);
+    delay(15);
+  }
+
+  // Controle do ar-condicionado
+  if (strcmp(topic, "/49618_49617/AC") == 0) {
+    int status = string.toInt();
+    int pos = map(status, 1, 100, 0, 180);
+    myservoAC.write(pos);
+    delay(15);
+
+    // Exibe status do AC
+    if (status == 0) {
+      Serial.println("ligado");
+    } else if (status == 100) {
+      Serial.println("desligado");
+    }
+  }
+}
+
+// Reconecta ao broker MQTT caso desconectado
+void reconnect() {
+  while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    if (client.connect("ESPClient")) {
+      Serial.println("connected");
+      // Inscreve-se nos tópicos MQTT relevantes
+      client.subscribe("/49618_49617/Janela");
+      client.subscribe("/49618_49617/Cortina");
+      client.subscribe("/49618_49617/AC");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+      delay(5000);
+    }
+  }
+}
+
+void loop() {
+  if (!client.connected()) {
+    reconnect(); // Garante reconexão ao MQTT
+  }
+
+  client.loop(); // Mantém cliente MQTT ativo
+
+  long now = millis();
+  if (now - lastMsg > 2000) { // Executa a cada 2 segundos
+    lastMsg = now;
+
+    // Lê temperatura e umidade do sensor DHT22
+    TempAndHumidity data = dhtSensor.getTempAndHumidity();
+    temp = data.temperature;
+    hum = data.humidity;
+
+    Serial.println("Temp: " + String(temp, 2) + "°C");
+    Serial.println("Humidity: " + String(hum, 1) + "%");
+    Serial.println("---");
+
+    // Publica dados no MQTT
+    snprintf(msg, 50, "%.2f °C", temp);
+    client.publish("/49618_49617/temperature", msg);
+    snprintf(msg, 50, "%.1f %%", hum);
+    client.publish("/49618_49617/humidity", msg);
+
+    // Lê valor do sensor de luz
+    int analogValue = analogRead(LIGHT_SENSOR_PIN);
+    Serial.print("Analog Value = ");
+    Serial.print(analogValue);
+
+    String lightIntensity;
+    // Classifica intensidade da luz
+    if (analogValue < 40) {
+      lightIntensity = "Escuro";
+    } else if (analogValue < 800) {
+      lightIntensity = "Meio";
+    } else if (analogValue < 2000) {
+      lightIntensity = "Normal";
+    } else if (analogValue < 3200) {
+      lightIntensity = "Luminoso";
+    } else {
+      lightIntensity = "Muita Luz!";
+    }
+
+    Serial.println(" => " + lightIntensity);
+
+    // Publica intensidade de luz no MQTT
+    snprintf(msg, 50, "%d lux", analogValue);
+    client.publish("/49618_49617/light", msg);
+
+    // Lê sensor de presença (PIR)
+    const int IP = digitalRead(PIR_PIN);
+    Serial.println(IP);
+
+    if (IP == 1) {
+      lotacao++; // Aumenta a contagem de presença
+      Serial.print("Lotação: ");
+      Serial.println(lotacao);
+      
+      if (lotacao >= 3) {
+        tone(BUZZER_PIN, 1000); // Ativa buzzer se limite de lotação for atingido
+        Serial.println("Alerta! Lotação máxima atingida.");
+        client.publish("/49618_49617/movement", "Lotação máxima atingida.");
+        delay(1000);
+        noTone(BUZZER_PIN);
+      } else {
+        noTone(BUZZER_PIN);
+        Serial.println("Disponível");
+        client.publish("/49618_49617/movement", "Disponível");
+        delay(1000);
+      }
+    } else {
+      if (lotacao > 0) {
+        lotacao = 0; // Reinicia a lotação caso não haja movimento
+        Serial.println("Lotação reiniciada.");
+      }
+    }
+  }
+
+  delay(100); // Pequeno atraso entre iterações do loop
+}

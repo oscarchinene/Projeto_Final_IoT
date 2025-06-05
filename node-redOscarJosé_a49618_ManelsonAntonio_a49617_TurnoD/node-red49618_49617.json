@@ -1,0 +1,29 @@
+[
+    {
+        "id": "5da8e261f7836ab1",
+        "type": "change",
+        "z": "a4b53cbd8cbac412",
+        "name": "Temperatura",
+        "rules": [
+            {
+                "t": "set",
+                "p": "payload",
+                "pt": "msg",
+                "to": "payload.temp",
+                "tot": "msg"
+            }
+        ],
+        "action": "",
+        "property": "",
+        "from": "",
+        "to": "",
+        "reg": false,
+        "x": 550,
+        "y": 240,
+        "wires": [
+            [
+                "ec59699443aba62b"
+            ]
+        ]
+    }
+]
